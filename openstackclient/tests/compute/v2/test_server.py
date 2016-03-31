@@ -181,6 +181,7 @@ class TestServerCreate(TestServer):
             key_name=None,
             availability_zone=None,
             block_device_mapping={},
+            block_device_mapping_v2=[],
             nics=[],
             scheduler_hints={},
             config_drive=None,
@@ -261,6 +262,7 @@ class TestServerCreate(TestServer):
             key_name=None,
             availability_zone=None,
             block_device_mapping={},
+            block_device_mapping_v2=[],
             nics=[{'net-id': 'net1_uuid',
                    'v4-fixed-ip': '',
                    'v6-fixed-ip': '',
@@ -327,6 +329,7 @@ class TestServerCreate(TestServer):
             key_name=None,
             availability_zone=None,
             block_device_mapping={},
+            block_device_mapping_v2=[],
             nics=[],
             scheduler_hints={},
             config_drive=None,
@@ -380,6 +383,7 @@ class TestServerCreate(TestServer):
             block_device_mapping={
                 'vda': real_volume_mapping
             },
+            block_device_mapping_v2=[],
             nics=[],
             scheduler_hints={},
             config_drive=None,
@@ -394,6 +398,131 @@ class TestServerCreate(TestServer):
 
         self.assertEqual(self.columns, columns)
         self.assertEqual(self.datalist(), data)
+
+    def test_server_create_with_valid_boot_disk_type(self):
+        arglist = [
+            '--image', 'image1',
+            '--flavor', self.flavor.id,
+            '--boot-disk-type', 'volume',
+            '--boot-disk-size', '40',
+            '--boot-disk-auto-remove',
+            self.new_server.name,
+        ]
+        verifylist = [
+            ('image', 'image1'),
+            ('flavor', self.flavor.id),
+            ('boot_disk_type', 'volume'),
+            ('boot_disk_size', 40),
+            ('boot_disk_auto_remove', True),
+            ('config_drive', False),
+            ('server_name', self.new_server.name),
+        ]
+
+        parsed_args = self.check_parser(self.cmd, arglist, verifylist)
+
+        # CreateServer.take_action() returns two tuples
+        columns, data = self.cmd.take_action(parsed_args)
+
+        expected_block_device_mapping_v2 = {'uuid': self.image.id,
+                                            'source_type': 'image',
+                                            'destination_type': 'volume',
+                                            'boot_index': 0, 'volume_size': 40,
+                                            'delete_on_termination': True}
+
+        # Set expected values
+        kwargs = dict(
+            meta=None,
+            files={},
+            reservation_id=None,
+            min_count=1,
+            max_count=1,
+            security_groups=[],
+            userdata=None,
+            key_name=None,
+            availability_zone=None,
+            block_device_mapping={},
+            block_device_mapping_v2=[expected_block_device_mapping_v2],
+            nics=[],
+            scheduler_hints={},
+            config_drive=None,
+        )
+        # ServerManager.create(name, image, flavor, **kwargs)
+        self.servers_mock.create.assert_called_with(
+            self.new_server.name,
+            None,
+            self.flavor,
+            **kwargs
+        )
+
+        self.assertEqual(self.columns, columns)
+        self.assertEqual(self.datalist(), data)
+
+    def test_server_create_with_invalid_boot_disk_type(self):
+        arglist = [
+            '--image', 'image1',
+            '--flavor', self.flavor.id,
+            '--boot-disk-type', 'invalid',
+            '--boot-disk-size', '40',
+            self.new_server.name,
+        ]
+        verifylist = [
+            ('image', 'image1'),
+            ('flavor', self.flavor.id),
+            ('boot_disk_type', 'invalid'),
+            ('boot_disk_size', 40),
+            ('config_drive', False),
+            ('server_name', self.new_server.name),
+        ]
+
+        parsed_args = self.check_parser(self.cmd, arglist, verifylist)
+        self.assertRaises(
+            exceptions.CommandError, self.cmd.take_action, parsed_args
+        )
+
+    def test_server_create_with_volume_and_invalid_size(self):
+        arglist = [
+            '--image', 'image1',
+            '--flavor', self.flavor.id,
+            '--boot-disk-type', 'volume',
+            self.new_server.name,
+        ]
+        verifylist = [
+            ('image', 'image1'),
+            ('flavor', self.flavor.id),
+            ('boot_disk_type', 'volume'),
+            ('boot_disk_size', 0),
+            ('config_drive', False),
+            ('server_name', self.new_server.name),
+        ]
+
+        parsed_args = self.check_parser(self.cmd, arglist, verifylist)
+        self.assertRaises(
+            exceptions.CommandError, self.cmd.take_action, parsed_args
+        )
+
+    def test_server_create_fails_with_mixed_block_device_formats(self):
+        arglist = [
+            '--image', 'image1',
+            '--flavor', self.flavor.id,
+            '--boot-disk-type', 'volume',
+            '--boot-disk-size', '40',
+            '--block-device-mapping', self.block_device_mapping,
+            self.new_server.name
+        ]
+        verifylist = [
+            ('image', 'image1'),
+            ('flavor', self.flavor.id),
+            ('boot_disk_type', 'volume'),
+            ('boot_disk_size', 40),
+            ('config_drive', False),
+            ('block_device_mapping', [self.block_device_mapping]),
+            ('server_name', self.new_server.name),
+        ]
+
+        parsed_args = self.check_parser(self.cmd, arglist, verifylist)
+        self.assertRaises(
+            exceptions.CommandError, self.cmd.take_action, parsed_args
+        )
 
 
 class TestServerDelete(TestServer):

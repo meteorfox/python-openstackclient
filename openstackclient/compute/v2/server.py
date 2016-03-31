@@ -335,6 +335,45 @@ class CreateServer(command.ShowOne):
                    '(optional extension)'),
         )
         parser.add_argument(
+            '--boot-disk-type',
+            metavar='<disk-type>',
+            default=None,
+            help=_('The type of the boot disk. This option can only be '
+                   'specified for a new boot disk and not for booting from '
+                   'an existing volume. Valid values are "local" or '
+                   '"volume".'),
+        )
+        parser.add_argument(
+            '--boot-disk-size',
+            metavar='<size-GB>',
+            type=int,
+            default=0,
+            help=_('The size of the boot disk. This option can only be '
+                   'specified for a new boot disk. Disk size must be in GB. '
+                   'If 0 defaults to min_disk for "local". When disk type is '
+                   '"volume" a disk size greater than 0 must be set. This '
+                   'option is ignored if "--boot-disk-type" option '
+                   'is not set.'),
+        )
+        parser.add_argument(
+            '--boot-disk-device-name',
+            metavar='<dev-name>',
+            help=_('The device name of the boot disk. This option can only be '
+                   'specified for a new boot disk and not for boot from an '
+                   'existing volume. If not set defaults to device name in '
+                   'the image metadata. Commonly it is not set. This option '
+                   'is ignored if "--boot-disk-type" option is not set.'),
+        )
+        parser.add_argument(
+            '--boot-disk-auto-remove',
+            action='store_true',
+            help=_('Automatically deletes volume used as boot disk. This '
+                   'option only applies for boot disk with "volume" type. '
+                   'A "local" boot disk type is ephemeral if this option is '
+                   'set it will be ignore. This option is ignored if '
+                   '"--boot-disk-type" option is not set.'),
+        )
+        parser.add_argument(
             '--nic',
             metavar="<net-id=net-uuid,v4-fixed-ip=ip-addr,v6-fixed-ip=ip-addr,"
                     "port-id=port-uuid>",
@@ -458,6 +497,38 @@ class CreateServer(command.ShowOne):
                         raise exceptions.CommandError(msg)
                 block_device_mapping.update({dev_key: block_volume})
 
+        block_device_mapping_v2 = []
+        if parsed_args.boot_disk_type:
+            if parsed_args.boot_disk_type not in ('local', 'volume',):
+                msg = _("Valid values for boot disk type are 'local' or "
+                        "'volume'")
+                raise exceptions.CommandError(msg)
+
+            if (parsed_args.boot_disk_type == 'volume' and
+                    parsed_args.boot_disk_size <= 0):
+                msg = _("A volume size greater than 0 must be specified if "
+                        "--boot-disk-type=volume is specified")
+                raise exceptions.CommandError(msg)
+            # Remove image from boot args since we are boot from volume
+            boot_args = [parsed_args.server_name, None, flavor]
+            remove_volume = parsed_args.boot_disk_auto_remove
+            bdm_dict = {'uuid': image.id, 'source_type': 'image',
+                        'destination_type': parsed_args.boot_disk_type,
+                        'boot_index': 0,
+                        'delete_on_termination': remove_volume}
+            if parsed_args.boot_disk_type == 'volume':
+                bdm_dict['volume_size'] = parsed_args.boot_disk_size
+            if parsed_args.boot_disk_device_name:
+                bdm_dict['device_name'] = parsed_args.boot_disk_device_name
+            if hasattr(image, 'metadata') and 'image_type' in image.metadata:
+                if image.metadata['image_type'] == 'snapshot':
+                    bdm_dict['source_type'] = 'snapshot'
+            block_device_mapping_v2.append(bdm_dict)
+
+        if block_device_mapping and block_device_mapping_v2:
+            msg = _("Cannot mix block device mapping formats")
+            raise exceptions.CommandError(msg)
+
         nics = []
         for nic_str in parsed_args.nic:
             nic_info = {"net-id": "", "v4-fixed-ip": "",
@@ -524,6 +595,7 @@ class CreateServer(command.ShowOne):
             key_name=parsed_args.key_name,
             availability_zone=parsed_args.availability_zone,
             block_device_mapping=block_device_mapping,
+            block_device_mapping_v2=block_device_mapping_v2,
             nics=nics,
             scheduler_hints=hints,
             config_drive=config_drive)
